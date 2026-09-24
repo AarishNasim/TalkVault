@@ -118,6 +118,7 @@ function normalizeUsername(value) {
 
 function publicUser(user) {
   return {
+    id: user._id ? user._id.toString() : user.id,
     name: user.name,
     username: user.username,
     email: user.email,
@@ -205,9 +206,9 @@ app.post('/login', async (req, res) => {
       return res.status(400).json({ error: "Username, email or phone and password are required" });
     }
 
-    const normalizedIdentifier = identifier.toLowerCase();
+    const normalizedIdentifier = String(identifier).trim().toLowerCase();
     const user = await User.findOne({ $or: [
-      { username: normalizedIdentifier }, { email: normalizedIdentifier }, { phone: identifier }
+      { username: normalizedIdentifier }, { email: normalizedIdentifier }, { phone: String(identifier).trim() }
     ] });
     if (!user) {
       return res.status(400).json({ error: "User not found!" });
@@ -227,6 +228,19 @@ app.post('/login', async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ error: "Server error during login" });
+  }
+});
+
+app.get('/me', async (req, res) => {
+  try {
+    const authUser = await getAuthenticatedUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    return res.json({ user: publicUser(authUser) });
+  } catch (error) {
+    return res.status(500).json({ error: 'Unable to load profile.' });
   }
 });
 
@@ -283,9 +297,21 @@ app.post('/change-username', async (req, res) => {
 // 4. SERVER START
 // ==========================================
 const PORT = 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-});
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
+  });
+}
+
+module.exports = {
+  app,
+  User,
+  publicUser,
+  createSession,
+  normalizeUsername,
+  getAuthenticatedUser
+};
 
 app.post('/login/email-link', async (req, res) => {
   try {

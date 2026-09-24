@@ -5,6 +5,62 @@ import AgoraRTC from 'agora-rtc-sdk-ng';
 
 function TalkVaultDashboard() {
   const navigate = useNavigate();
+  const [userData, setUserData] = useState(() => {
+    try {
+      const storedUser = localStorage.getItem('talkvault_user');
+      return storedUser ? JSON.parse(storedUser) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      const savedUser = localStorage.getItem('talkvault_user');
+      if (savedUser) {
+        try {
+          setUserData(JSON.parse(savedUser));
+        } catch {
+          setUserData(null);
+        }
+      }
+
+      const token = localStorage.getItem('token');
+      if (!token) {
+        if (!savedUser) {
+          navigate('/');
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch('http://localhost:5000/me', {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Unauthorized');
+        }
+
+        const data = await response.json();
+        setUserData(data.user);
+        localStorage.setItem('talkvault_user', JSON.stringify(data.user));
+        localStorage.setItem('userEmail', data.user.email || '');
+        localStorage.setItem('userName', data.user.name || data.user.username || 'TalkVault user');
+      } catch (error) {
+        if (!savedUser) {
+          navigate('/');
+          return;
+        }
+        const fallbackUser = JSON.parse(savedUser);
+        setUserData(fallbackUser);
+      }
+    };
+
+    loadProfile();
+  }, [navigate]);
   
   // --- EXISTING SIDEBAR SYSTEM STATE ---
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -218,7 +274,11 @@ const endCall = async () => {
 
   // --- EXISTING LOGOUT SYSTEM ---
   const handleLogout = () => {
-    localStorage.clear();
+    localStorage.removeItem('token');
+    localStorage.removeItem('firebaseToken');
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userName');
+    localStorage.removeItem('talkvault_user');
     navigate('/');
   };
 
@@ -250,11 +310,16 @@ const endCall = async () => {
     );
   };
 
+  const profileName = userData?.name || userData?.username || 'TalkVault user';
+  const profileId = userData?.id ? userData.id.slice(-6).toUpperCase() : 'USER';
+  const profileImage = `https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=6366f1&color=fff`;
+
   return (
-    <div className="min-h-screen bg-[#0a0f1d] text-white font-sans flex overflow-hidden">
+    <div className="min-h-screen bg-[#0b1020] text-white font-sans px-0 py-0 md:px-4 md:py-4 xl:px-6 xl:py-6">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col overflow-hidden bg-[#0a0f1d] shadow-[0_30px_80px_rgba(15,23,42,0.65)] lg:max-h-[95vh] lg:flex-row lg:rounded-[32px] lg:border lg:border-white/10">
       
       {/* PROFESSIONAL SIDEBAR */}
-      <aside className="w-64 bg-[#111827] flex flex-col border-r border-gray-800 relative shrink-0">
+      <aside className="w-full border-b border-gray-800 bg-[#111827] lg:w-72 lg:border-b-0 lg:border-r lg:shrink-0">
         
         {/* Brand Logo & Tagline */}
         <div className="p-6 border-b border-gray-800/50">
@@ -267,14 +332,14 @@ const endCall = async () => {
         {/* User Profile Block */}
         <div className="mx-4 my-4 p-3 bg-[#171e2e] rounded-xl flex items-center gap-3 border border-gray-800/80 shadow-md">
           <div className="relative">
-            <img src="https://ui-avatars.com/api/?name=Aman+Singh&background=6366f1&color=fff" alt="Aman" className="w-10 h-10 rounded-full border border-indigo-500/50" />
+            <img src={profileImage} alt={profileName} className="w-10 h-10 rounded-full border border-indigo-500/50" />
             <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#111827] rounded-full"></span>
           </div>
           <div className="overflow-hidden">
-            <p className="text-sm font-semibold truncate">Aman Singh</p>
+            <p className="text-sm font-semibold truncate">{profileName}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1.5 py-0.2 rounded border border-purple-500/30 font-medium">B2 Level</span>
-              <span className="text-[10px] text-gray-400 font-mono">ID: 4092</span>
+              <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1.5 py-0.2 rounded border border-purple-500/30 font-medium">{userData?.username ? 'Member' : 'B2 Level'}</span>
+              <span className="text-[10px] text-gray-400 font-mono">ID: {profileId}</span>
             </div>
           </div>
         </div>
@@ -335,7 +400,7 @@ const endCall = async () => {
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 p-8 overflow-y-auto w-full">
+      <main className="w-full flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
         
         {/* Header */}
         <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10">
@@ -610,18 +675,18 @@ const endCall = async () => {
                   <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center w-40 backdrop-blur-sm relative hover:bg-white/10 transition cursor-pointer">
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full z-10">ONLINE</div>
                     <div className="w-16 h-16 mx-auto rounded-full border-2 border-green-400 p-0.5 mb-3">
-                      <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Bushra" className="w-full h-full rounded-full object-cover" />
+                      <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Chahat" className="w-full h-full rounded-full object-cover" />
                     </div>
-                    <h4 className="font-bold text-sm">Bushra, 21</h4>
+                    <h4 className="font-bold text-sm">Chahat, 21</h4>
                     <p className="text-xs text-gray-400 mt-1">(India, C1 Level)</p>
                   </div>
 
                   <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center w-40 backdrop-blur-sm relative hover:bg-white/10 transition cursor-pointer">
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full z-10">ONLINE</div>
                     <div className="w-16 h-16 mx-auto rounded-full border-2 border-green-400 p-0.5 mb-3">
-                      <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Jaanu" className="w-full h-full rounded-full object-cover" />
+                      <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Aarish" className="w-full h-full rounded-full object-cover" />
                     </div>
-                    <h4 className="font-bold text-sm">Jaanu, 24</h4>
+                    <h4 className="font-bold text-sm">Aarish, 24</h4>
                     <p className="text-xs text-gray-400 mt-1">(UK, B1 Level)</p>
                   </div>
 
@@ -688,6 +753,7 @@ const endCall = async () => {
         </div>
 
       </main>
+      </div>
     </div>
   );
 }

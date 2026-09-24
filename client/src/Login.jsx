@@ -45,6 +45,7 @@ function Login() {
         localStorage.setItem('token', data.token);
         localStorage.setItem('userEmail', data.user.email);
         localStorage.setItem('userName', data.user.name);
+        localStorage.setItem('talkvault_user', JSON.stringify(data.user));
         navigate('/dashboard'); 
       } else {
         setError(data.error);
@@ -57,9 +58,18 @@ function Login() {
   const completeFirebaseLogin = async (result) => {
     const { user } = result;
     const firebaseToken = await user.getIdToken();
+    const profile = {
+      id: user.uid || user.email || 'firebase-user',
+      name: user.displayName || user.email?.split('@')[0] || 'TalkVault user',
+      username: user.displayName || user.email?.split('@')[0] || 'TalkVault user',
+      email: user.email || '',
+      phone: user.phoneNumber || ''
+    };
     localStorage.setItem('firebaseToken', firebaseToken);
-    localStorage.setItem('userEmail', user.email || '');
-    localStorage.setItem('userName', user.displayName || 'TalkVault user');
+    localStorage.setItem('token', firebaseToken);
+    localStorage.setItem('userEmail', profile.email);
+    localStorage.setItem('userName', profile.name);
+    localStorage.setItem('talkvault_user', JSON.stringify(profile));
     navigate('/dashboard');
   };
 
