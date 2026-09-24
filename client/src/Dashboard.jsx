@@ -64,6 +64,109 @@ function TalkVaultDashboard() {
   
   // --- EXISTING SIDEBAR SYSTEM STATE ---
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [allUsers, setAllUsers] = useState([]);
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
+  const [friends, setFriends] = useState([]);
+  const [selectedFriend, setSelectedFriend] = useState(null);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatMessages, setChatMessages] = useState({});
+
+  const loadFriendData = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      const [usersRes, friendsRes] = await Promise.all([
+        fetch('http://localhost:5000/users', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('http://localhost:5000/friends', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+
+      const usersData = usersRes.ok ? await usersRes.json() : { users: [] };
+      const friendsData = friendsRes.ok ? await friendsRes.json() : { friends: [], incoming: [], outgoing: [] };
+
+      setAllUsers(usersData.users || []);
+      setFriends(friendsData.friends || []);
+      setFriendRequests({
+        incoming: friendsData.incoming || [],
+        outgoing: friendsData.outgoing || []
+      });
+    } catch (error) {
+      console.error('Unable to load friend data', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFriendData();
+  }, [loadFriendData]);
+
+  const sendFriendRequest = async (targetUser) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      navigate('/');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:5000/friends/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ identifier: targetUser.username || targetUser.email || targetUser.phone })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to send request');
+      await loadFriendData();
+      alert(data.message);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const acceptFriendRequest = async (requestId) => {
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch('http://localhost:5000/friends/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ requestId })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to accept request');
+      await loadFriendData();
+      alert(data.message);
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const openChat = (friend) => {
+    setSelectedFriend(friend);
+    setChatDraft('');
+  };
+
+  const sendChatMessage = () => {
+    if (!selectedFriend || !chatDraft.trim()) return;
+    const key = selectedFriend.id;
+    setChatMessages((prev) => ({
+      ...prev,
+      [key]: [
+        ...(prev[key] || []),
+        { from: 'me', text: chatDraft.trim() }
+      ]
+    }));
+    setChatDraft('');
+  };
+
+  const handleVoiceCall = (friend) => {
+    alert(`Voice call started with ${friend.name || friend.username}`);
+    startCall(friend);
+  };
+
+  const handleVideoCall = (friend) => {
+    alert(`Video call started with ${friend.name || friend.username}`);
+    startCall(friend, true);
+  };
 
   // --- NEW: EXTENDED GAME SYSTEM STATES ---
   const [activeGame, setActiveGame] = useState('speedRun'); // 'speedRun', 'meaningMatcher', 'sentenceBuilder', 'grammarQuiz'
@@ -134,12 +237,12 @@ const AGORA_APP_ID = "YOUR_AGORA_APP_ID";
   }, [currentWordIndex, currentGameWords.length]);
 
   // Call Start karne ka function
-const startCall = async () => {
+const startCall = async (targetUser = null, isVideo = false) => {
   try {
     setIsCalling(true);
     
     // 1. Ek random channel name/room name banao matching ke liye
-    const channelName = "talkvault_global_room"; 
+    const channelName = targetUser ? `talkvault_${targetUser.id || 'user'}` : "talkvault_global_room"; 
 
     // 2. Backend se Token fetch karo
     const response = await fetch(`http://localhost:5000/api/agora-token?channelName=${channelName}`);
@@ -161,9 +264,16 @@ const startCall = async () => {
     await client.join(AGORA_APP_ID, data.channelName, data.token, data.uid);
 
     // 6. Microphone access karke audio track banao aur publish karo
-    const localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-    localAudioTrackRef.current = localAudioTrack;
-    await client.publish([localAudioTrack]);
+    if (isVideo) {
+      const videoTrack = await AgoraRTC.createCameraVideoTrack();
+      const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      localAudioTrackRef.current = audioTrack;
+      await client.publish([audioTrack, videoTrack]);
+    } else {
+      const localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      localAudioTrackRef.current = localAudioTrack;
+      await client.publish([localAudioTrack]);
+    }
 
     console.log("Call connected successfully!");
   } catch (error) {
@@ -657,68 +767,125 @@ const endCall = async () => {
               </div>
             </div>
 
-            {/* LIVE CALL PRACTICE SECTION */}
-            <div className="bg-gradient-to-br from-[#121a3f] to-[#0a1128] border border-[#2a3665] rounded-3xl p-8 mb-8 relative overflow-hidden shadow-2xl">
+            {/* FRIENDS / LIVE CHAT / CALLS SECTION */}
+            <div className="mb-8 rounded-3xl border border-[#2a3665] bg-gradient-to-br from-[#121a3f] to-[#0a1128] p-6 shadow-2xl relative overflow-hidden">
               <div className="absolute top-0 left-0 w-64 h-64 bg-cyan-500/10 blur-[80px] rounded-full"></div>
               <div className="absolute bottom-0 right-0 w-64 h-64 bg-purple-500/10 blur-[80px] rounded-full"></div>
 
               <div className="relative z-10">
-                <div className="flex justify-between items-center mb-8">
-                  <h2 className="text-2xl font-bold tracking-wide">LIVE CALL PRACTICE</h2>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-cyan-300">Community</p>
+                    <h2 className="text-2xl font-bold tracking-wide">FRIENDS & LIVE CALLS</h2>
+                  </div>
                   <div className="flex items-center gap-3">
-                    <span className="bg-red-500/20 text-red-400 text-xs px-3 py-1 rounded-full border border-red-500/30 font-bold">18+ Verified</span>
-                    <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                    <span className="bg-red-500/20 text-red-400 text-xs px-3 py-1 rounded-full border border-red-500/30 font-bold">Registered users only</span>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-6 items-center">
-                  <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center w-40 backdrop-blur-sm relative hover:bg-white/10 transition cursor-pointer">
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full z-10">ONLINE</div>
-                    <div className="w-16 h-16 mx-auto rounded-full border-2 border-green-400 p-0.5 mb-3">
-                      <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Chahat" className="w-full h-full rounded-full object-cover" />
+                {friendRequests.incoming.length > 0 && (
+                  <div className="mb-6 rounded-2xl border border-purple-500/30 bg-purple-500/5 p-4">
+                    <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-purple-300">Friend Requests</h3>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {friendRequests.incoming.map((request) => (
+                        <div key={request.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/60 p-3">
+                          <div>
+                            <p className="font-semibold">{request.requester.name}</p>
+                            <p className="text-xs text-slate-400">@{request.requester.username}</p>
+                          </div>
+                          <button onClick={() => acceptFriendRequest(request.id)} className="rounded-lg bg-green-500 px-3 py-2 text-xs font-bold text-white hover:bg-green-400">Accept</button>
+                        </div>
+                      ))}
                     </div>
-                    <h4 className="font-bold text-sm">Chahat, 21</h4>
-                    <p className="text-xs text-gray-400 mt-1">(India, C1 Level)</p>
+                  </div>
+                )}
+
+                <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">Registered users</h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {allUsers.length === 0 ? (
+                        <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 text-sm text-slate-400">No other registered users found.</div>
+                      ) : (
+                        allUsers.map((user) => {
+                          const isFriend = friends.some((friend) => friend.id === user.id);
+                          const friendButtonText = isFriend ? 'Connected' : 'Send Request';
+                          return (
+                            <div key={user.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 font-bold text-white">
+                                  {user.name?.charAt(0)?.toUpperCase() || 'U'}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-semibold">{user.name}</p>
+                                  <p className="truncate text-xs text-slate-400">@{user.username}</p>
+                                </div>
+                              </div>
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                {!isFriend ? (
+                                  <button onClick={() => sendFriendRequest(user)} className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-400">{friendButtonText}</button>
+                                ) : (
+                                  <>
+                                    <button onClick={() => openChat(user)} className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-bold text-white hover:bg-blue-400">Chat</button>
+                                    <button onClick={() => handleVoiceCall(user)} className="rounded-lg bg-green-500 px-3 py-2 text-xs font-bold text-white hover:bg-green-400">Call</button>
+                                    <button onClick={() => handleVideoCall(user)} className="rounded-lg bg-pink-500 px-3 py-2 text-xs font-bold text-white hover:bg-pink-400">Video</button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
 
-                  <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center w-40 backdrop-blur-sm relative hover:bg-white/10 transition cursor-pointer">
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full z-10">ONLINE</div>
-                    <div className="w-16 h-16 mx-auto rounded-full border-2 border-green-400 p-0.5 mb-3">
-                      <img src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Aarish" className="w-full h-full rounded-full object-cover" />
-                    </div>
-                    <h4 className="font-bold text-sm">Aarish, 24</h4>
-                    <p className="text-xs text-gray-400 mt-1">(UK, B1 Level)</p>
-                  </div>
-
-                  <div className="flex-1"></div>
-
-                  <div className="flex gap-4">
-                    <button className="bg-gradient-to-b from-indigo-500/20 to-purple-600/40 border border-purple-500/50 p-4 rounded-2xl w-36 flex flex-col items-center justify-center hover:scale-105 transition shadow-lg">
-                      <div className="bg-purple-600 w-12 h-12 rounded-full flex items-center justify-center mb-3 shadow-[0_0_15px_rgba(147,51,234,0.5)]">
-                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                  <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
+                    <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-purple-300">My friends</h3>
+                    {friends.length === 0 ? (
+                      <p className="text-sm text-slate-400">You have no friends yet. Send a request to someone from the registered users list.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {friends.map((friend) => (
+                          <div key={friend.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-3">
+                            <div>
+                              <p className="font-semibold">{friend.name}</p>
+                              <p className="text-xs text-slate-400">@{friend.username}</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={() => openChat(friend)} className="rounded-lg bg-blue-500 px-2 py-1 text-[10px] font-bold text-white">Chat</button>
+                              <button onClick={() => handleVoiceCall(friend)} className="rounded-lg bg-green-500 px-2 py-1 text-[10px] font-bold text-white">Call</button>
+                              <button onClick={() => handleVideoCall(friend)} className="rounded-lg bg-pink-500 px-2 py-1 text-[10px] font-bold text-white">Video</button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <p className="text-xs text-gray-300 text-center">Match Instantly</p>
-                      <p className="text-sm font-bold mt-1">Voice Call</p>
-                    </button>
-                    
-                   <button 
-  onClick={isCalling ? endCall : startCall}
-  className={`flex flex-col items-center justify-center border transition-all duration-300 shadow-lg p-4 rounded-xl ${
-    isCalling 
-      ? 'bg-red-500 hover:bg-red-600 border-red-400 text-white animate-pulse' 
-      : 'bg-gradient-to-b from-indigo-500/20 to-purple-600/40 border-purple-500/30 hover:scale-105 text-white'
-  }`}
->
-  <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${isCalling ? 'bg-white/20' : 'bg-purple-600'}`}>
-    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeLinejoin="round" strokeWidth="2">
-      <path d="M3 5a2 2 0 012-2h3.28a1 1 0 01.94.72l.54 2.21a1 1 0 01-.24.93l-1.27 1.27a16 16 0 006.75 6.75l1.27-1.27a1 1 0 01.93-.24l2.21.54a1 1 0 01.72.94V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-    </svg>
-  </div>
-  <p className="text-xs text-gray-300 text-center">Match Instantly</p>
-  <p className="text-sm font-bold mt-1">{isCalling ? "Disconnect" : "Voice Call"}</p>
-</button>
+                    )}
                   </div>
                 </div>
+
+                {selectedFriend && (
+                  <div className="mt-6 rounded-2xl border border-cyan-500/30 bg-slate-900/70 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">Chat with {selectedFriend.name}</h3>
+                      <button onClick={() => setSelectedFriend(null)} className="text-xs text-slate-300 hover:text-white">Close</button>
+                    </div>
+                    <div className="mb-3 flex min-h-[120px] flex-col gap-2 rounded-xl border border-white/10 bg-[#0b1020] p-3">
+                      {(chatMessages[selectedFriend.id] || []).length === 0 ? (
+                        <p className="text-sm text-slate-400">Start the conversation with {selectedFriend.name}.</p>
+                      ) : (
+                        (chatMessages[selectedFriend.id] || []).map((message, index) => (
+                          <div key={`${message.from}-${index}`} className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${message.from === 'me' ? 'ml-auto bg-cyan-500 text-white' : 'bg-slate-800 text-slate-100'}`}>
+                            {message.text}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input value={chatDraft} onChange={(e) => setChatDraft(e.target.value)} placeholder="Type a message..." className="flex-1 rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-sm text-white outline-none ring-0" />
+                      <button onClick={sendChatMessage} className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-bold text-white hover:bg-cyan-400">Send</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </>

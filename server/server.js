@@ -76,6 +76,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   phone: { type: String, required: true, unique: true, trim: true },
   password: { type: String, required: true },
+  friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'users' }],
   emailVerified: { type: Boolean, default: false },
   emailVerificationToken: { type: String },
   emailVerificationExpires: { type: Date },
@@ -85,6 +86,14 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('users', userSchema);
+
+const friendRequestSchema = new mongoose.Schema({
+  requester: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
+  recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
+  status: { type: String, enum: ['pending', 'accepted'], default: 'pending' }
+}, { timestamps: true });
+
+const FriendRequest = mongoose.model('friendrequests', friendRequestSchema);
 
 // Security Key
 const JWT_SECRET = "TalkVault_Super_Secret_Key_2026";
@@ -241,6 +250,186 @@ app.get('/me', async (req, res) => {
     return res.json({ user: publicUser(authUser) });
   } catch (error) {
     return res.status(500).json({ error: 'Unable to load profile.' });
+  }
+});
+
+app.get('/users', async (req, res) => {
+  try {
+    const authUser = await getAuthenticatedUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    const users = await User.find({ _id: { $ne: authUser._id } }).select('name username email phone').lean();
+    return res.json({ users: users.map((user) => ({
+      id: user._id.toString(),
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      phone: user.phone
+    })) });
+  } catch (error) {
+    return res.status(500).json({ error: 'Unable to load users.' });
+  }
+});
+
+app.get('/friends', async (req, res) => {
+  try {
+    const authUser = await getAuthenticatedUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    const user = await User.findById(authUser._id).populate('friends', 'name username email phone');
+    const incoming = await FriendRequest.find({ recipient: authUser._id, status: 'pending' }).populate('requester', 'name username email phone');
+    const outgoing = await FriendRequest.find({ requester: authUser._id, status: 'pending' }).populate('recipient', 'name username email phone');
+
+    res.json({
+      friends: (user?.friends || []).map((friend) => ({
+        id: friend._id.toString(),
+        name: friend.name,
+        username: friend.username,
+        email: friend.email,
+        phone: friend.phone
+      })),
+      incoming: incoming.map((request) => ({
+        id: request._id.toString(),
+        requester: {
+          id: request.requester._id.toString(),
+          name: request.requester.name,
+          username: request.requester.username,
+          email: request.requester.email,
+          phone: request.requester.phone
+        }
+      })),
+      outgoing: outgoing.map((request) => ({
+        id: request._id.toString(),
+        recipient: {
+          id: request.recipient._id.toString(),
+          name: request.recipient.name,
+          username: request.recipient.username,
+          email: request.recipient.email,
+          phone: request.recipient.phone
+        }
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to load friends.' });
+  }
+});
+
+app.post('/friends/request', async (req, res) => {
+  try {
+    const authUser = await getAuthenticatedUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    const targetIdentifier = String(req.body.identifier || '').trim();
+    if (!targetIdentifier) {
+      return res.status(400).json({ error: 'Please provide a username, email, or phone.' });
+    }
+
+    const targetUser = await User.findOne({
+      $or: [
+        { username: targetIdentifier.toLowerCase() },
+        { email: targetIdentifier.toLowerCase() },
+        { phone: targetIdentifier }
+      ]
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found for friend request.' });
+    }
+
+    if (targetUser._id.toString() === authUser._id.toString()) {
+      return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
+    }
+
+    const existing = await FriendRequest.findOne({
+      $or: [
+        { requester: authUser._id, recipient: targetUser._id },
+        { requester: targetUser._id, recipient: authUser._id }
+      ],
+      status: 'pending'
+    });
+
+    if (existing) {
+      return res.status(400).json({ error: 'A pending friend request already exists.' });
+    }
+
+    const authUserRecord = await User.findById(authUser._id);
+    if ((authUserRecord.friends || []).some((friendId) => friendId.toString() === targetUser._id.toString())) {
+      return res.status(400).json({ error: 'This user is already in your friend list.' });
+    }
+
+    const request = await FriendRequest.create({
+      requester: authUser._id,
+      recipient: targetUser._id,
+      status: 'pending'
+    });
+
+    res.status(201).json({
+      message: 'Friend request sent successfully.',
+      request: {
+        id: request._id.toString(),
+        recipient: {
+          id: targetUser._id.toString(),
+          name: targetUser.name,
+          username: targetUser.username,
+          email: targetUser.email
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to send friend request.' });
+  }
+});
+
+app.post('/friends/accept', async (req, res) => {
+  try {
+    const authUser = await getAuthenticatedUser(req);
+    if (!authUser) {
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    const { requestId } = req.body;
+    if (!requestId) {
+      return res.status(400).json({ error: 'Request ID is required.' });
+    }
+
+    const request = await FriendRequest.findById(requestId).populate('requester recipient');
+    if (!request || request.status !== 'pending') {
+      return res.status(404).json({ error: 'Friend request not found.' });
+    }
+
+    if (request.recipient._id.toString() !== authUser._id.toString()) {
+      return res.status(403).json({ error: 'You cannot accept a request that is not for you.' });
+    }
+
+    request.status = 'accepted';
+    await request.save();
+
+    const requester = await User.findById(request.requester._id);
+    const recipient = await User.findById(request.recipient._id);
+
+    if (!requester.friends) requester.friends = [];
+    if (!recipient.friends) recipient.friends = [];
+
+    if (!requester.friends.some((friendId) => friendId.toString() === recipient._id.toString())) {
+      requester.friends.push(recipient._id);
+    }
+
+    if (!recipient.friends.some((friendId) => friendId.toString() === requester._id.toString())) {
+      recipient.friends.push(requester._id);
+    }
+
+    await requester.save();
+    await recipient.save();
+
+    res.json({ message: 'Friend request accepted.', request });
+  } catch (error) {
+    res.status(500).json({ error: 'Unable to accept friend request.' });
   }
 });
 
